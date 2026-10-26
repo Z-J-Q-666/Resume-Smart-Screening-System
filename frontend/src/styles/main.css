@@ -1,0 +1,268 @@
+:root {
+  --app-bg: #f4f6fa;
+  --panel-bg: #ffffff;
+  --sidebar-bg: #1b2230;
+  --sidebar-hover: #252e40;
+  --accent: #2f6bff;
+  --text-main: #1f2937;
+  --text-sub: #6b7280;
+  --border: #e5e8ef;
+  --good: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  background: var(--app-bg);
+  color: var(--text-main);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-shell {
+  display: flex;
+  height: 100%;
+}
+
+.sidebar {
+  width: 232px;
+  flex: 0 0 232px;
+  background: var(--sidebar-bg);
+  color: #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 14px;
+}
+
+.sidebar .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 22px;
+}
+
+.sidebar .brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #2f6bff, #6f9bff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.sidebar .brand-text b {
+  color: #fff;
+  font-size: 15px;
+  letter-spacing: .4px;
+  display: block;
+  line-height: 1.25;
+}
+
+.sidebar .brand-text span {
+  font-size: 11px;
+  color: #7c8798;
+  letter-spacing: .6px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 9px;
+  color: #b6c0d0;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: background .16s, color .16s;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.nav-item:hover {
+  background: var(--sidebar-hover);
+  color: #fff;
+}
+
+.nav-item.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(47, 107, 255, .32);
+}
+
+.nav-item .el-icon {
+  font-size: 17px;
+}
+
+.sidebar .spacer {
+  flex: 1;
+}
+
+.sidebar .foot {
+  font-size: 11px;
+  color: #66707f;
+  padding: 10px 12px;
+  line-height: 1.7;
+  border-top: 1px solid #2a3345;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 22px 28px 14px;
+}
+
+.page-head h1 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+
+.page-head p {
+  margin: 6px 0 0;
+  color: var(--text-sub);
+  font-size: 13px;
+}
+
+.page-body {
+  flex: 1;
+  overflow: auto;
+  padding: 0 28px 28px;
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.panel + .panel {
+  margin-top: 16px;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.panel-title h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--text-sub);
+}
+
+.mono {
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.score-num {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-high { color: var(--good); }
+.score-mid { color: var(--accent); }
+.score-low { color: var(--warn); }
+.score-bad { color: var(--bad); }
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  background: #eef2ff;
+  color: #3b5bdb;
+}
+
+.skill-chip.miss {
+  background: #fdf0ef;
+  color: #c0392b;
+}
+
+.skill-chip.plus {
+  background: #eefaf2;
+  color: #15803d;
+}
+
+.empty {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--text-sub);
+}
+
+.stat-strip {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  flex: 1;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.stat-card .k {
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+.stat-card .v {
+  font-size: 24px;
+  font-weight: 700;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.link-cell {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.link-cell:hover {
+  text-decoration: underline;
+}
