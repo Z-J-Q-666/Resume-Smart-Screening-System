@@ -1,0 +1,9 @@
+# Python 3.10 —— 简历智能筛选系统 AI 服务
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+python-multipart>=0.0.9
+python-dotenv>=1.0
+pdfplumber>=0.11
+langchain>=0.3
+langchain-openai>=0.2
