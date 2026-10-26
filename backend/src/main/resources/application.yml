@@ -1,0 +1,80 @@
+server:
+  port: 8080
+  tomcat:
+    max-http-form-post-size: 12MB
+
+spring:
+  application:
+    name: resume-screening
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/resume_screening?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false&rewriteBatchedStatements=true
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      database: 0
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+  global-config:
+    db-config:
+      id-type: auto
+
+app:
+  # 文件存储根目录，相对路径基于 backend 工程根
+  upload-dir: ./uploads
+  # Python AI 服务
+  ai:
+    base-url: http://127.0.0.1:8000
+    connect-timeout-ms: 3000
+    read-timeout-ms: 90000
+  # RocketMQ
+  mq:
+    namesrv-addr: 127.0.0.1:9876
+    producer-group: resume-screening-producer
+    extract-topic: resume-extract
+    extract-consumer-group: resume-extract-consumer-group
+    match-topic: match-score
+    match-consumer-group: match-score-consumer-group
+    consume-threads: 2
+    max-reconsume-times: 3
+    # 启动时若 MQ 不可用是否阻断启动：false = 降级为同步直连 AI
+    enabled: true
+  # 上传限流：每用户每分钟请求数
+  rate-limit:
+    upload-per-minute: 20
+  # 语义分 / 规则分权重
+  score:
+    rule-weight: 0.6
+    semantic-weight: 0.4
+
+logging:
+  level:
+    root: INFO
+    com.resume.screening: INFO
+    org.apache.rocketmq: WARN
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
