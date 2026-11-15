@@ -128,6 +128,8 @@ public final class Views {
                             BigDecimal score,
                             BigDecimal ruleScore,
                             BigDecimal semanticScore,
+                            /** HIGH / PARTIAL / NONE，由语义分推导；未打分时为 null */
+                            String matchLevel,
                             Integer hitCount,
                             Integer mustCount,
                             String status,
@@ -146,6 +148,8 @@ public final class Views {
                              String degree,
                              BigDecimal totalYears,
                              BigDecimal score,
+                             /** HIGH / PARTIAL / NONE */
+                             String matchLevel,
                              String source) {
     }
 

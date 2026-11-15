@@ -54,7 +54,7 @@ app:
     # 必须与 ai-service/app/match_chain.py 的 PROMPT_VERSION 一致，
     # 它参与语义分缓存的 key。不一致时缓存会一直未命中（只浪费调用，不会算错分），
     # 启动时会比对 /health 并打 WARN。
-    match-prompt-version: v1
+    match-prompt-version: v2
     # 成本估算单价（元 / 百万 token）。改价只改这两行，别散落到代码里。
     price-prompt-per-million: 2.0
     price-completion-per-million: 8.0
@@ -77,6 +77,10 @@ app:
   score:
     rule-weight: 0.6
     semantic-weight: 0.4
+    # 语义分分组阈值：榜单先分组、组内再按综合分排。
+    # 语义分回答"方向对不对"，规则分回答"这个人够不够"，两者不该混成一个排序键。
+    match-high-threshold: 70
+    match-partial-threshold: 50
 
 logging:
   level:

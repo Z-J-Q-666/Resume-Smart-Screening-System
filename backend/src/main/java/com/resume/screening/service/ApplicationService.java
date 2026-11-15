@@ -151,7 +151,9 @@ public class ApplicationService {
         int mustCount = json.toStringList(job.getMustSkills()).size();
 
         IPage<BoardRow> p = applicationMapper.selectBoard(
-                new Page<>(page, Math.min(size, 100)), jobId, minScore, degree);
+                new Page<>(page, Math.min(size, 100)), jobId, minScore, degree,
+                props.getScore().getMatchHighThreshold(),
+                props.getScore().getMatchPartialThreshold());
 
         List<Views.BoardItem> records = p.getRecords().stream()
                 .map(r -> {
@@ -160,7 +162,8 @@ public class ApplicationService {
                     return new Views.BoardItem(r.getId(), r.getResumeId(), r.getCandidateName(),
                             r.getPhone(), r.getEmail(),
                             r.getDegree(), r.getTotalYears(), r.getScore(), r.getRuleScore(),
-                            r.getSemanticScore(), hit.size(), mustCount, r.getStatus(),
+                            r.getSemanticScore(), levelOf(r.getSemanticScore()),
+                            hit.size(), mustCount, r.getStatus(),
                             r.getReason(), hit, miss, r.getErrorMsg(), r.getCreatedAt());
                 })
                 .toList();
@@ -174,12 +177,14 @@ public class ApplicationService {
     public List<Views.JobTopItem> top(long jobId, int n) {
         jobService.require(jobId);
         int limit = Math.max(1, Math.min(n, 50));
+        // 多取一些：方向不符的人综合分可能虚高，分组后会往后排，不多取就凑不满 n 个
+        int fetch = Math.min(limit * 3, 150);
 
-        List<Long> ids = boardCache.top(jobId, limit);
+        List<Long> ids = boardCache.top(jobId, fetch);
         String source = "redis";
         if (ids.isEmpty()) {
             rebuildBoard(jobId);
-            ids = boardCache.top(jobId, limit);
+            ids = boardCache.top(jobId, fetch);
             source = "mysql";
         }
         if (ids.isEmpty()) {
@@ -189,16 +194,65 @@ public class ApplicationService {
         Map<Long, BoardRow> rows = applicationMapper.selectTopRows(jobId, ids).stream()
                 .collect(Collectors.toMap(BoardRow::getResumeId, Function.identity(), (a, b) -> a));
 
-        List<Views.JobTopItem> result = new ArrayList<>(ids.size());
+        List<Views.JobTopItem> all = new ArrayList<>(ids.size());
         for (Long rid : ids) {
             BoardRow row = rows.get(rid);
             if (row == null) {
                 continue;
             }
-            result.add(new Views.JobTopItem(rid, row.getCandidateName(), row.getDegree(),
-                    row.getTotalYears(), row.getScore(), source));
+            all.add(new Views.JobTopItem(rid, row.getCandidateName(), row.getDegree(),
+                    row.getTotalYears(), row.getScore(), levelOf(row.getSemanticScore()), source));
         }
-        return result;
+
+        // Redis 的 ZSet 只按综合分排；这里再套一层分组，保证和看板口径一致
+        all.sort((a, b) -> {
+            int byLevel = Integer.compare(levelRank(a.matchLevel()), levelRank(b.matchLevel()));
+            return byLevel != 0 ? byLevel : scoreDesc(a.score(), b.score());
+        });
+        return all.size() <= limit ? all : new ArrayList<>(all.subList(0, limit));
+    }
+
+    // ---------------------------------------------------------------- 匹配分组
+
+    /**
+     * 语义分 → 匹配分组。阈值与 SQL 的 CASE 共用 AppProperties 这一个来源，改配置即可同时生效。
+     */
+    private String levelOf(BigDecimal semantic) {
+        if (semantic == null) {
+            return null;
+        }
+        double v = semantic.doubleValue();
+        if (v >= props.getScore().getMatchHighThreshold()) {
+            return "HIGH";
+        }
+        if (v >= props.getScore().getMatchPartialThreshold()) {
+            return "PARTIAL";
+        }
+        return "NONE";
+    }
+
+    private static int levelRank(String level) {
+        if (level == null) {
+            return 3;
+        }
+        return switch (level) {
+            case "HIGH" -> 0;
+            case "PARTIAL" -> 1;
+            default -> 2;
+        };
+    }
+
+    private static int scoreDesc(BigDecimal a, BigDecimal b) {
+        if (a == null && b == null) {
+            return 0;
+        }
+        if (a == null) {
+            return 1;
+        }
+        if (b == null) {
+            return -1;
+        }
+        return b.compareTo(a);
     }
 
     private void rebuildBoard(long jobId) {

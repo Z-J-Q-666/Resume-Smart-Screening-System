@@ -14,8 +14,13 @@ import java.util.List;
 public interface JobApplicationMapper extends BaseMapper<JobApplication> {
 
     /**
-     * 候选人看板：默认按综合分倒序，未打分的排最后。
-     * 学历过滤走 JSON_EXTRACT，避免把过滤放到内存里做导致分页失真。
+     * 候选人看板：先按语义分分组（高度匹配 → 部分相关 → 方向不符），组内按综合分倒序，未打分的排最后。
+     *
+     * <p>为什么不是直接按综合分排：跨方向的候选人语义分会集体挤在低分段（实测 38/38/42/42），
+     * 而综合分里 0.4 的语义权重会把他们的分数抬到 60 出头，看起来"还行"，
+     * 实际方向完全不符。语义分是筛选器，规则分才是排序依据。
+     *
+     * <p>阈值从 AppProperties 传入，不在 SQL 里硬编码。
      */
     @Select("""
             <script>
@@ -34,13 +39,20 @@ public interface JobApplicationMapper extends BaseMapper<JobApplication> {
             <if test="degree != null and degree != ''">
                 AND JSON_UNQUOTE(JSON_EXTRACT(r.parsed_json, '$.education.degree')) = #{degree}
             </if>
-            ORDER BY (ja.score IS NULL), ja.score DESC, ja.id DESC
+            ORDER BY (ja.score IS NULL),
+                     CASE WHEN ja.semantic_score &gt;= #{highThreshold} THEN 0
+                          WHEN ja.semantic_score &gt;= #{partialThreshold} THEN 1
+                          WHEN ja.semantic_score IS NULL THEN 3
+                          ELSE 2 END,
+                     ja.score DESC, ja.id DESC
             </script>
             """)
     IPage<BoardRow> selectBoard(IPage<BoardRow> page,
                                 @Param("jobId") Long jobId,
                                 @Param("minScore") BigDecimal minScore,
-                                @Param("degree") String degree);
+                                @Param("degree") String degree,
+                                @Param("highThreshold") int highThreshold,
+                                @Param("partialThreshold") int partialThreshold);
 
     /** 岗位列表用：一次 GROUP BY 拿到所有岗位的投递数与均分 */
     @Select("""

@@ -57,5 +57,17 @@ public class AppProperties {
     public static class Score {
         private double ruleWeight = 0.6;
         private double semanticWeight = 0.4;
+
+        /**
+         * 语义分分组阈值。
+         *
+         * <p>榜单先按分组排、组内再按综合分排——因为语义分回答的是"方向对不对"，
+         * 不是"强多少"。跨方向时它会集体挤在低分区（实测四个候选人 38/38/42/42），
+         * 继续拿它当排序主键等于没排。
+         *
+         * <p>SQL 的 CASE 判断从这里取值，不要在两处硬编码。
+         */
+        private int matchHighThreshold = 70;
+        private int matchPartialThreshold = 50;
     }
 }
