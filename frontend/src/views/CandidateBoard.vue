@@ -86,6 +86,8 @@
             <template #default="{ row }">
               <span style="font-weight: 600">{{ row.candidateName || '未识别' }}</span>
               <div class="muted" style="font-size: 11.5px; margin-top: 2px">
+                <span v-if="row.matchLevel === 'NONE'" class="lv-tag lv-none">方向不符</span>
+                <span v-else-if="row.matchLevel === 'PARTIAL'" class="lv-tag lv-partial">部分相关</span>
                 {{ row.phone || row.email || '' }}
               </div>
               <div v-if="row.status === 'FAILED'" style="font-size: 11.5px; color: #c0392b">打分失败</div>

@@ -198,6 +198,20 @@ body {
 .score-low { color: var(--warn); }
 .score-bad { color: var(--bad); }
 
+/* 匹配度分组标签：语义分只判断方向对不对，不参与强度排序 */
+.lv-tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  line-height: 15px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+.lv-partial { background: #FAEEDA; color: #854F0B; }
+.lv-none { background: #FCEBEB; color: #A32D2D; }
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;
