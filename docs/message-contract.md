@@ -191,6 +191,7 @@ Python 对**已知业务失败**返回 HTTP 200 + 非 0 `code`，只有未预期
 | 幂等锁 | `resume:lock:{resumeId}` / `match:lock:{applicationId}`，TTL 120s，Lua 比对 token 释放 |
 | 幂等兜底 | 状态已是 `EXTRACTED` / `SCORED` 直接跳过，不重复调 LLM |
 | **语义分缓存** | `match:semantic:{resumeId}:{jobId}`，TTL 7 天，value 里存 `promptVersion`。版本不匹配即视为未命中并覆盖写入。缓存只是加速层，Redis 挂了退回直接调 LLM |
+| **语义分分组** | 纯 Java 侧推导，不跨语言：`semantic_score >= 70` → `HIGH`，`>= 50` → `PARTIAL`，否则 `NONE`。榜单先按分组排、组内按综合分排。阈值来自 `app.score.match-*-threshold`，不要在 SQL 与 Java 里各写一遍 |
 | **AI 调用流水** | 每次调 LLM 落一行 `ai_call_log`（含失败行）；命中缓存也落一行（`cache_hit=1`、`tokens=0`），否则命中率的分母是错的 |
 | 状态权威 | MySQL 是唯一真相，Redis 清了不影响功能 |
 | **两条链路的接力** | 官网投递先落 `job_application.status='WAITING'`；`resume-extract` 消费成功后由同一次消费**续投** `match-score`（`ExtractConsumer#promoteWaitingApplications`），并用 `UPDATE ... WHERE status='WAITING'` 抢占防重。简历解析终止失败时，等它的投递一并置 `FAILED`（`failWaitingByResumeId`）。 |
