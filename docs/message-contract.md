@@ -94,7 +94,9 @@ Topic 与消费组见 `application.yml` 的 `app.mq` 段。
       "summary": "五年后端经验，长期在高并发交易链路工作……"
     },
     "costMs": 8234,
-    "tokens": { "prompt": 1384, "completion": 247, "total": 1631 }
+    "tokens": { "prompt": 1384, "completion": 247, "total": 1631 },
+    "model": "deepseek-chat",
+    "promptVersion": "v2"
   }
 }
 ```
@@ -102,6 +104,9 @@ Topic 与消费组见 `application.yml` 的 `app.mq` 段。
 - `rawText` 是**全文**，用于落库 `resume.raw_text`；送模型的文本在 Python 侧截断到 8000 字符（§10）。
 - `profile` 的字段名严格等于 §9.2 的 `ResumeProfile`，Java 不做改名，直接写入 `parsed_json`。
 - `skills` 已按 `skill_alias.json` 归一化（`SpringBoot` → `Spring Boot`）。
+- `tokens` / `model` / `promptVersion` 由 Java 写入 `ai_call_log`，**不参与业务判断**，
+  但缺了它们就算不出成本、也没法回答"准确率变化是 prompt 改的还是数据换的"。
+  `promptVersion` 的值定义在 `extract_chain.py` 的 `PROMPT_VERSION`，改 prompt 必须递增。
 
 ### 2.2 `POST /match`
 
@@ -127,19 +132,36 @@ Topic 与消费组见 `application.yml` 的 `app.mq` 段。
     "semanticScore": 92,
     "reason": "五年经验深耕交易/支付链路……",
     "costMs": 3120,
-    "tokens": { "prompt": 2100, "completion": 96, "total": 2196 }
+    "tokens": { "prompt": 2100, "completion": 96, "total": 2196 },
+    "model": "deepseek-chat",
+    "promptVersion": "v1"
   }
 }
 ```
 
 - 只返回**语义分与理由**。命中/缺失技能由 Java 做集合运算（§FR-MAT-02），Python 不参与。
 - `semanticScore` 为 0–100 整数；`reason` ≤ 200 字（prompt 要求 ≤120）。
+- Java 侧会用 `app.ai.match-prompt-version` 作为语义分缓存的版本比对依据。
+  两边版本不一致时缓存会持续未命中（只浪费调用，不影响正确性），
+  因此后端启动时比对 `/health` 的 `matchPromptVersion` 并在不一致时打 WARN。
 
 ### 2.3 `GET /health`
 
 ```json
-{ "code": 0, "message": "ok", "data": { "status": "UP", "model": "deepseek-chat", "baseUrl": "https://api.deepseek.com/v1" } }
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "status": "UP",
+    "model": "deepseek-chat",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "extractPromptVersion": "v2",
+    "matchPromptVersion": "v1"
+  }
+}
 ```
+
+> 后端启动时读这个接口，比对 `app.ai.match-prompt-version`；AI 服务没起来只记 info，不阻断启动。
 
 ### 2.4 错误响应
 
@@ -168,6 +190,8 @@ Python 对**已知业务失败**返回 HTTP 200 + 非 0 `code`，只有未预期
 | 消费最大重试 | `app.mq.max-reconsume-times`（默认 3），第 3 次仍失败即落 `FAILED` |
 | 幂等锁 | `resume:lock:{resumeId}` / `match:lock:{applicationId}`，TTL 120s，Lua 比对 token 释放 |
 | 幂等兜底 | 状态已是 `EXTRACTED` / `SCORED` 直接跳过，不重复调 LLM |
+| **语义分缓存** | `match:semantic:{resumeId}:{jobId}`，TTL 7 天，value 里存 `promptVersion`。版本不匹配即视为未命中并覆盖写入。缓存只是加速层，Redis 挂了退回直接调 LLM |
+| **AI 调用流水** | 每次调 LLM 落一行 `ai_call_log`（含失败行）；命中缓存也落一行（`cache_hit=1`、`tokens=0`），否则命中率的分母是错的 |
 | 状态权威 | MySQL 是唯一真相，Redis 清了不影响功能 |
 | **两条链路的接力** | 官网投递先落 `job_application.status='WAITING'`；`resume-extract` 消费成功后由同一次消费**续投** `match-score`（`ExtractConsumer#promoteWaitingApplications`），并用 `UPDATE ... WHERE status='WAITING'` 抢占防重。简历解析终止失败时，等它的投递一并置 `FAILED`（`failWaitingByResumeId`）。 |
 
