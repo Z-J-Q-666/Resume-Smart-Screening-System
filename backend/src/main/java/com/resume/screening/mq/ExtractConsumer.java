@@ -8,10 +8,12 @@ import com.resume.screening.cache.RedisLock;
 import com.resume.screening.cache.ResumeStatusCache;
 import com.resume.screening.common.Json;
 import com.resume.screening.config.AppProperties;
+import com.resume.screening.domain.AiCallLog;
 import com.resume.screening.domain.ApplicationStatus;
 import com.resume.screening.domain.JobApplication;
 import com.resume.screening.domain.Resume;
 import com.resume.screening.domain.ResumeStatus;
+import com.resume.screening.mapper.AiCallLogMapper;
 import com.resume.screening.mapper.JobApplicationMapper;
 import com.resume.screening.mapper.ResumeMapper;
 import com.resume.screening.service.StorageService;
@@ -53,6 +55,7 @@ public class ExtractConsumer implements InitializingBean {
     private final StorageService storage;
     private final ResumeStatusCache statusCache;
     private final RedisLock lock;
+    private final AiCallLogMapper aiCallLogMapper;
 
     private DefaultMQPushConsumer consumer;
 
@@ -144,7 +147,9 @@ public class ExtractConsumer implements InitializingBean {
                 int costMs = (int) (System.currentTimeMillis() - t0);
 
                 resumeMapper.markExtracted(resumeId, outcome.profileJson(), outcome.rawText(),
-                        costMs, name, phone, email);
+                        costMs, outcome.promptVersion(), name, phone, email);
+
+                logExtractCall(resumeId, outcome, costMs);
 
                 statusCache.put(resumeId, ResumeStatus.EXTRACTED.name(), null, name);
                 statusCache.putProfile(resumeId, outcome.profileJson());
@@ -162,6 +167,7 @@ public class ExtractConsumer implements InitializingBean {
                 if (!e.isRetryable() || last) {
                     String err = truncate(e.getMessage(), 480);
                     markFailed(resumeId, err);
+                    logExtractFailure(resumeId, e, (int) (System.currentTimeMillis() - t0));
                     log.error("简历抽取失败（终止）resumeId={} msgId={} attempt={} code={} err={}",
                             resumeId, msg.getMsgId(), attempt, e.getCode(), err);
                     return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
@@ -217,6 +223,48 @@ public class ExtractConsumer implements InitializingBean {
         int affected = applicationMapper.failWaitingByResumeId(resumeId, truncate(err, 480));
         if (affected > 0) {
             log.warn("简历解析失败，连带作废 {} 条等待中的投递 resumeId={}", affected, resumeId);
+        }
+    }
+
+    // ---------------------------------------------------------------- 调用流水
+
+    /** 成功：token 与耗时落库。README 里"抽取耗时 P50""单份成本"都从这张表读 */
+    private void logExtractCall(long resumeId, AiClient.ExtractOutcome outcome, int costMs) {
+        AiCallLog row = new AiCallLog();
+        row.setTask("EXTRACT");
+        row.setResumeId(resumeId);
+        row.setModel(outcome.model());
+        row.setPromptVersion(outcome.promptVersion());
+        row.setPromptTokens(outcome.promptTokens());
+        row.setCompletionTokens(outcome.completionTokens());
+        row.setCostMs(costMs);
+        row.setCacheHit(0);
+        row.setSuccess(1);
+        saveQuietly(row);
+    }
+
+    /** 失败也要记，否则"成功率"只能靠翻日志数 */
+    private void logExtractFailure(long resumeId, AiException e, int costMs) {
+        AiCallLog row = new AiCallLog();
+        row.setTask("EXTRACT");
+        row.setResumeId(resumeId);
+        row.setModel("unknown");
+        row.setPromptVersion("unknown");
+        row.setPromptTokens(0);
+        row.setCompletionTokens(0);
+        row.setCostMs(costMs);
+        row.setCacheHit(0);
+        row.setSuccess(0);
+        row.setErrorCode(e.getCode());
+        saveQuietly(row);
+    }
+
+    /** 流水是观测数据不是业务数据，写失败只告警，绝不影响简历状态 */
+    private void saveQuietly(AiCallLog row) {
+        try {
+            aiCallLogMapper.insert(row);
+        } catch (Exception e) {
+            log.warn("写 AI 调用流水失败 task={} err={}", row.getTask(), e.getMessage());
         }
     }
 

@@ -6,13 +6,16 @@ import com.resume.screening.ai.AiException;
 import com.resume.screening.cache.BoardCache;
 import com.resume.screening.cache.RedisKeys;
 import com.resume.screening.cache.RedisLock;
+import com.resume.screening.cache.SemanticScoreCache;
 import com.resume.screening.common.Json;
 import com.resume.screening.config.AppProperties;
+import com.resume.screening.domain.AiCallLog;
 import com.resume.screening.domain.ApplicationStatus;
 import com.resume.screening.domain.Job;
 import com.resume.screening.domain.JobApplication;
 import com.resume.screening.domain.Resume;
 import com.resume.screening.domain.ResumeStatus;
+import com.resume.screening.mapper.AiCallLogMapper;
 import com.resume.screening.mapper.JobApplicationMapper;
 import com.resume.screening.mapper.JobMapper;
 import com.resume.screening.mapper.ResumeMapper;
@@ -33,6 +36,7 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * match-score 消费者：规则分（Java 算）+ 语义分（LLM 给）+ 综合分。
@@ -52,6 +56,8 @@ public class MatchConsumer implements InitializingBean {
     private final AiClient aiClient;
     private final BoardCache boardCache;
     private final RedisLock lock;
+    private final SemanticScoreCache semanticCache;
+    private final AiCallLogMapper aiCallLogMapper;
 
     private DefaultMQPushConsumer consumer;
 
@@ -151,9 +157,26 @@ public class MatchConsumer implements InitializingBean {
             List<String> plusSkills = json.toStringList(job.getPlusSkills());
 
             try {
-                AiClient.MatchOutcome semantic = aiClient.match(
-                        job.getTitle(), job.getJdText(),
-                        json.toStringList(job.getMustSkills()), plusSkills, profile);
+                String promptVersion = props.getAi().getMatchPromptVersion();
+                boolean cacheHit = false;
+                AiClient.MatchOutcome semantic;
+
+                // 同一份简历投多个岗位、重试、对账补投，profile 与岗位要求都没变时不该重复付费
+                Optional<SemanticScoreCache.CachedScore> cached =
+                        semanticCache.get(resume.getId(), job.getId(), promptVersion);
+                if (cached.isPresent()) {
+                    cacheHit = true;
+                    semantic = new AiClient.MatchOutcome(
+                            cached.get().score(), cached.get().reason(), 0, 0, 0,
+                            "cache", promptVersion);
+                } else {
+                    semantic = aiClient.match(
+                            job.getTitle(), job.getJdText(),
+                            json.toStringList(job.getMustSkills()), plusSkills, profile);
+                    // 缓存 key 用配置版本：配置与 Python 侧的 PROMPT_VERSION 必须一致，启动时校验
+                    semanticCache.put(resume.getId(), job.getId(),
+                            semantic.semanticScore(), semantic.reason(), promptVersion);
+                }
 
                 BigDecimal ruleScore = BigDecimal.valueOf(breakdown.ruleScore());
                 BigDecimal semanticScore = BigDecimal.valueOf(semantic.semanticScore());
@@ -169,18 +192,22 @@ public class MatchConsumer implements InitializingBean {
 
                 boardCache.update(job.getId(), resume.getId(), total.doubleValue());
 
+                int costMs = (int) (System.currentTimeMillis() - t0);
+                logMatchCall(applicationId, job.getId(), resume.getId(), semantic, costMs, cacheHit);
+
                 log.info("打分完成 applicationId={} jobId={} resumeId={} edu={} exp={} skill={} "
-                                + "rule={} semantic={} total={} costMs={}",
+                                + "rule={} semantic={} total={} costMs={} cacheHit={}",
                         applicationId, job.getId(), resume.getId(),
                         breakdown.educationScore(), breakdown.expScore(), breakdown.skillScore(),
-                        breakdown.ruleScore(), semantic.semanticScore(), total,
-                        System.currentTimeMillis() - t0);
+                        breakdown.ruleScore(), semantic.semanticScore(), total, costMs, cacheHit);
                 return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
 
             } catch (AiException e) {
                 boolean last = reconsume >= props.getMq().getMaxReconsumeTimes();
                 if (!e.isRetryable() || last) {
                     fail(applicationId, truncate("语义打分失败：" + e.getMessage(), 480));
+                    logMatchFailure(applicationId, app.getJobId(), app.getResumeId(), e,
+                            (int) (System.currentTimeMillis() - t0));
                     log.error("打分失败（终止）applicationId={} attempt={} code={} err={}",
                             applicationId, attempt, e.getCode(), e.getMessage());
                     return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
@@ -206,6 +233,52 @@ public class MatchConsumer implements InitializingBean {
 
     private void fail(long applicationId, String errorMsg) {
         applicationMapper.updateStatus(applicationId, ApplicationStatus.FAILED.name(), errorMsg);
+    }
+
+    // ---------------------------------------------------------------- 调用流水
+
+    /** 命中缓存也记一行（cacheHit=1、tokens=0），否则命中率的分母是错的 */
+    private void logMatchCall(long applicationId, long jobId, long resumeId,
+                              AiClient.MatchOutcome outcome, int costMs, boolean cacheHit) {
+        AiCallLog row = new AiCallLog();
+        row.setTask("MATCH");
+        row.setApplicationId(applicationId);
+        row.setJobId(jobId);
+        row.setResumeId(resumeId);
+        row.setModel(outcome.model());
+        row.setPromptVersion(outcome.promptVersion());
+        row.setPromptTokens(outcome.promptTokens());
+        row.setCompletionTokens(outcome.completionTokens());
+        row.setCostMs(costMs);
+        row.setCacheHit(cacheHit ? 1 : 0);
+        row.setSuccess(1);
+        saveQuietly(row);
+    }
+
+    private void logMatchFailure(long applicationId, long jobId, long resumeId,
+                                 AiException e, int costMs) {
+        AiCallLog row = new AiCallLog();
+        row.setTask("MATCH");
+        row.setApplicationId(applicationId);
+        row.setJobId(jobId);
+        row.setResumeId(resumeId);
+        row.setModel("unknown");
+        row.setPromptVersion("unknown");
+        row.setPromptTokens(0);
+        row.setCompletionTokens(0);
+        row.setCostMs(costMs);
+        row.setCacheHit(0);
+        row.setSuccess(0);
+        row.setErrorCode(e.getCode());
+        saveQuietly(row);
+    }
+
+    private void saveQuietly(AiCallLog row) {
+        try {
+            aiCallLogMapper.insert(row);
+        } catch (Exception e) {
+            log.warn("写 AI 调用流水失败 task={} err={}", row.getTask(), e.getMessage());
+        }
     }
 
     private static String truncate(String s, int max) {

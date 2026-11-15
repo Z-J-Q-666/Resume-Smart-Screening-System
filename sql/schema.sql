@@ -43,6 +43,7 @@ CREATE TABLE `resume` (
                    COMMENT 'PENDING/PARSING/EXTRACTED/FAILED',
   `error_msg`      VARCHAR(500)          DEFAULT NULL,
   `cost_ms`        INT                   DEFAULT NULL COMMENT '解析耗时',
+  `prompt_version` VARCHAR(16)           DEFAULT NULL COMMENT '抽取所用 prompt 版本，评估对比与缓存失效的依据',
   `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -70,3 +71,28 @@ CREATE TABLE `job_application` (
   UNIQUE KEY `uk_job_resume` (`job_id`, `resume_id`),
   KEY `idx_job_score` (`job_id`, `score` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='投递记录';
+
+-- ------------------------------------------------------------
+-- AI 调用流水：每次调 LLM 落一行，用于统计 token / 成本 / 缓存命中率
+-- 命中语义分缓存时也落一行（cache_hit=1，tokens=0），否则算不出命中率
+-- ------------------------------------------------------------
+CREATE TABLE `ai_call_log` (
+  `id`                BIGINT      NOT NULL AUTO_INCREMENT,
+  `task`              VARCHAR(20) NOT NULL COMMENT 'EXTRACT / MATCH',
+  `resume_id`         BIGINT               DEFAULT NULL,
+  `application_id`    BIGINT               DEFAULT NULL,
+  `job_id`            BIGINT               DEFAULT NULL,
+  `model`             VARCHAR(60) NOT NULL COMMENT '如 deepseek-chat',
+  `prompt_version`    VARCHAR(16) NOT NULL DEFAULT 'unknown' COMMENT 'prompt 版本，评估对比的锚点',
+  `prompt_tokens`     INT         NOT NULL DEFAULT 0,
+  `completion_tokens` INT         NOT NULL DEFAULT 0,
+  `cost_ms`           INT         NOT NULL DEFAULT 0 COMMENT '本次调用总耗时（含网络与重试）',
+  `cache_hit`         TINYINT     NOT NULL DEFAULT 0 COMMENT '1=命中语义分缓存，未真正调用 LLM',
+  `success`           TINYINT     NOT NULL DEFAULT 1,
+  `error_code`        INT                  DEFAULT NULL COMMENT '失败时的 AI 错误码，2001/2002/2003',
+  `created_at`        DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_task_created` (`task`, `created_at`),
+  KEY `idx_resume` (`resume_id`),
+  KEY `idx_application` (`application_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 调用流水';

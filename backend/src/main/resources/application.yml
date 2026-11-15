@@ -51,6 +51,13 @@ app:
     base-url: http://127.0.0.1:8000
     connect-timeout-ms: 3000
     read-timeout-ms: 90000
+    # 必须与 ai-service/app/match_chain.py 的 PROMPT_VERSION 一致，
+    # 它参与语义分缓存的 key。不一致时缓存会一直未命中（只浪费调用，不会算错分），
+    # 启动时会比对 /health 并打 WARN。
+    match-prompt-version: v1
+    # 成本估算单价（元 / 百万 token）。改价只改这两行，别散落到代码里。
+    price-prompt-per-million: 2.0
+    price-completion-per-million: 8.0
   # RocketMQ
   mq:
     namesrv-addr: 127.0.0.1:9876

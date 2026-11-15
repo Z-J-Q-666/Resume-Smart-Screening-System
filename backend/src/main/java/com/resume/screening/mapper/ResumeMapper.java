@@ -21,6 +21,7 @@ public interface ResumeMapper extends BaseMapper<Resume> {
                    parsed_json = #{parsedJson},
                    raw_text = #{rawText},
                    cost_ms = #{costMs},
+                   prompt_version = #{promptVersion},
                    candidate_name = COALESCE(#{name}, candidate_name),
                    phone = COALESCE(#{phone}, phone),
                    email = COALESCE(#{email}, email),
@@ -31,6 +32,7 @@ public interface ResumeMapper extends BaseMapper<Resume> {
                       @Param("parsedJson") String parsedJson,
                       @Param("rawText") String rawText,
                       @Param("costMs") Integer costMs,
+                      @Param("promptVersion") String promptVersion,
                       @Param("name") String name,
                       @Param("phone") String phone,
                       @Param("email") String email);

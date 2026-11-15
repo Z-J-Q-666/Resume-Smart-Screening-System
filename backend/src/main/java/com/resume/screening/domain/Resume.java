@@ -31,6 +31,8 @@ public class Resume {
     private String status;
     private String errorMsg;
     private Integer costMs;
+    /** 抽取所用 prompt 版本，和 ai_call_log.prompt_version 对应 */
+    private String promptVersion;
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

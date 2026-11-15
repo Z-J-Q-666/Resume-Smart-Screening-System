@@ -148,4 +148,23 @@ public final class Views {
                              BigDecimal score,
                              String source) {
     }
+
+    // ------------------------------------------------------------------ AI 统计
+
+    /**
+     * 从 ai_call_log 聚合出来的指标。README 里"抽取耗时""单份成本""缓存命中率"
+     * 就是这张接口的输出，不再靠手抄日志。
+     */
+    public record AiStatsView(long totalCalls,
+                              long extractCalls,
+                              long matchCalls,
+                              long matchCacheHits,
+                              double cacheHitRate,
+                              long promptTokens,
+                              long completionTokens,
+                              long totalTokens,
+                              double avgCostMs,
+                              double estCostYuan,
+                              String priceNote) {
+    }
 }

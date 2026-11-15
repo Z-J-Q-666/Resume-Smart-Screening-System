@@ -34,10 +34,19 @@ public class AiClient {
     private final AppProperties props;
     private final Json json;
 
-    public record ExtractOutcome(String rawText, String profileJson, int costMs, int promptTokens, int completionTokens) {
+    /** model / promptVersion 由 Python 侧随响应带回，落进 ai_call_log，是评估对比的锚点 */
+    public record ExtractOutcome(String rawText, String profileJson, int costMs,
+                                 int promptTokens, int completionTokens,
+                                 String model, String promptVersion) {
     }
 
-    public record MatchOutcome(int semanticScore, String reason, int costMs) {
+    public record MatchOutcome(int semanticScore, String reason, int costMs,
+                               int promptTokens, int completionTokens,
+                               String model, String promptVersion) {
+    }
+
+    /** /health 返回的版本信息，用于启动时校验 Java 与 Python 的 prompt 版本是否对齐 */
+    public record HealthInfo(String model, String extractPromptVersion, String matchPromptVersion) {
     }
 
     private record Envelope(int code, String message, JsonNode data) {
@@ -71,7 +80,9 @@ public class AiClient {
                 profileJson,
                 data.path("costMs").asInt(0),
                 tokens.path("prompt").asInt(0),
-                tokens.path("completion").asInt(0)
+                tokens.path("completion").asInt(0),
+                data.path("model").asText("unknown"),
+                data.path("promptVersion").asText("unknown")
         );
     }
 
@@ -103,8 +114,41 @@ public class AiClient {
             throw AiException.schemaViolation("语义分超出 0-100 范围：" + score);
         }
         String reason = data.path("reason").asText("");
-        log.info("语义分 job={} score={} costMs={}", jobTitle, score, System.currentTimeMillis() - t0);
-        return new MatchOutcome(score, reason, data.path("costMs").asInt(0));
+        JsonNode tokens = data.path("tokens");
+        log.info("语义分 job={} score={} tokens={} costMs={}",
+                jobTitle, score, tokens.path("total").asInt(0),
+                System.currentTimeMillis() - t0);
+        return new MatchOutcome(
+                score,
+                reason,
+                data.path("costMs").asInt(0),
+                tokens.path("prompt").asInt(0),
+                tokens.path("completion").asInt(0),
+                data.path("model").asText("unknown"),
+                data.path("promptVersion").asText("unknown")
+        );
+    }
+
+    // ------------------------------------------------------------------- health
+
+    /** 读 AI 服务版本。调用方自己容错——服务没起来是正常情况，不该阻断后端启动 */
+    public HealthInfo health() {
+        ResponseEntity<String> resp;
+        try {
+            resp = aiRestTemplate.getForEntity(props.getAi().getBaseUrl() + "/health", String.class);
+        } catch (Exception e) {
+            throw AiException.llmFailure("AI 服务健康检查失败：" + e.getMessage());
+        }
+        JsonNode root = json.read(resp.getBody());
+        JsonNode data = root == null ? null : root.path("data");
+        if (data == null || data.isMissingNode() || data.isNull()) {
+            throw AiException.llmFailure("健康检查返回结构异常");
+        }
+        return new HealthInfo(
+                data.path("model").asText("unknown"),
+                data.path("extractPromptVersion").asText("unknown"),
+                data.path("matchPromptVersion").asText("unknown")
+        );
     }
 
     // ------------------------------------------------------------------ internal
