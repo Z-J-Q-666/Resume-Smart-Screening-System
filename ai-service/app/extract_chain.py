@@ -8,6 +8,12 @@ from .llm import structured_call
 from .schemas import ResumeProfile
 from .skill_alias import normalize_skills
 
+# prompt 版本：改动 _SYSTEM 或 _user_prompt 时必须递增。
+# 版本号会落进 resume.prompt_version 与 ai_call_log.prompt_version——
+# 没有这个锚点，就回答不了"准确率变化是 prompt 改的，还是换了一批简历"。
+#   v1 → v2：user prompt 加入【今天日期】，修正"2020.07-至今"被算成 null 的问题。
+PROMPT_VERSION = "v2"
+
 _SYSTEM = """你是一位严谨的简历信息抽取引擎。你的唯一任务是从简历文本中抽取结构化信息，输出 JSON。
 
 以下三条是硬约束，违反任意一条即视为错误输出：

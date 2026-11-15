@@ -14,9 +14,9 @@ from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from .config import settings
-from .extract_chain import extract_profile
+from .extract_chain import PROMPT_VERSION as EXTRACT_PROMPT_VERSION, extract_profile
 from .llm import LLMFailure, SchemaViolation
-from .match_chain import match_profile
+from .match_chain import PROMPT_VERSION as MATCH_PROMPT_VERSION, match_profile
 from .pdf_reader import NoTextLayerError, extract_text
 from .schemas import MatchRequest
 
@@ -69,6 +69,9 @@ def health():
             "status": "UP",
             "model": settings.LLM_MODEL,
             "baseUrl": settings.LLM_BASE_URL,
+            # Java 侧启动时比对这两个版本，避免两边配置的缓存 key 对不上
+            "extractPromptVersion": EXTRACT_PROMPT_VERSION,
+            "matchPromptVersion": MATCH_PROMPT_VERSION,
         },
     }
 
@@ -121,6 +124,8 @@ async def extract(file: UploadFile = File(...)):
             "profile": profile.model_dump(),
             "costMs": cost_ms,
             "tokens": tokens,
+            "model": settings.LLM_MODEL,
+            "promptVersion": EXTRACT_PROMPT_VERSION,
         }
     )
 
@@ -154,5 +159,7 @@ async def match(req: MatchRequest, request: Request):
             "reason": result.reason,
             "costMs": cost_ms,
             "tokens": tokens,
+            "model": settings.LLM_MODEL,
+            "promptVersion": MATCH_PROMPT_VERSION,
         }
     )

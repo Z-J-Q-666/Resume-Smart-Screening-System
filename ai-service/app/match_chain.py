@@ -6,6 +6,11 @@ import time
 from .llm import structured_call
 from .schemas import MatchRequest, MatchResult
 
+# prompt 版本：改动 _SYSTEM 或 _user_prompt 时必须递增。
+# Java 侧拿它做语义分缓存的 key 后缀——prompt 一改，旧缓存自动失效，
+# 不会出现"新 prompt 配旧分数"的脏数据。
+PROMPT_VERSION = "v1"
+
 _SYSTEM = """你是一位资深技术面试官，负责判断候选人经历与岗位要求的契合程度，输出 JSON。
 
 评分口径（必须遵守）：
