@@ -130,6 +130,19 @@ v1 的粗分档把它抹平了。
 
 ## 3. 启动
 
+### 3.0 Docker 一键部署
+
+```bash
+cp .env.docker.example .env    # 填入 LLM_API_KEY
+docker compose up -d --build
+```
+
+7 个容器（MySQL / Redis / RocketMQ×2 / AI 服务 / 后端 / 前端）一起起来，
+对外只暴露 **8088** 一个端口，`/api` 由 nginx 反代到后端。
+端口、数据卷、排错见 [`deploy/README.md`](./deploy/README.md)。
+
+下面是本地开发方式，需要单个服务打断点时用。
+
 ### 3.1 前置
 
 | 依赖 | 说明 |
