@@ -1,0 +1,31 @@
+# 构建上下文是项目根，必须挡掉大目录，否则 docker build 要把几个 G 传给 daemon
+
+**/node_modules
+**/dist
+**/target
+**/__pycache__
+**/*.pyc
+
+.git
+.gitignore
+.idea
+.vscode
+.workbuddy
+.screenshots
+.run
+
+# 运行时产物：上传的文件、日志
+uploads
+backend/uploads
+backend/app.log
+frontend/vite.log
+demo/acceptance
+
+# 演示数据和文档不参与镜像构建（演示简历留在宿主机上，需要时手动传）
+demo
+docs
+*.md
+
+# 本地密钥绝不进镜像
+ai-service/.env
+.env

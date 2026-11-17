@@ -1,0 +1,155 @@
+name: resume-screening
+
+# 所有服务共用的日志轮转策略，避免跑两天把磁盘写满
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ---------------------------------------------------------------- 基础设施
+  mysql:
+    image: mysql:8.0
+    container_name: rs-mysql
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_DATABASE: resume_screening
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --default-time-zone=+08:00
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 只在数据目录为空时执行一次；已有数据不会重复跑
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+
+  redis:
+    image: redis:7-alpine
+    container_name: rs-redis
+    restart: unless-stopped
+    logging: *default-logging
+    # 本项目 Redis 只做加速（需求 §3 D3：MySQL 是唯一真相），不落盘
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.3
+    container_name: rs-mq-namesrv
+    restart: unless-stopped
+    logging: *default-logging
+    command: sh mqnamesrv
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
+    ports:
+      - "9876:9876"
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.3
+    container_name: rs-mq-broker
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - rocketmq-namesrv
+    # 官方镜像没有轻量的健康检查手段，用固定等待换简单可靠
+    command: sh -c "sleep 12 && sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/broker.conf"
+    environment:
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
+    volumes:
+      - ./deploy/rocketmq/broker.conf:/home/rocketmq/broker.conf:ro
+      - rocketmq-store:/home/rocketmq/store
+    ports:
+      - "10911:10911"
+
+  # ---------------------------------------------------------------- 应用
+  ai-service:
+    build:
+      context: .
+      dockerfile: ai-service/Dockerfile
+    image: resume-screening/ai-service:latest
+    container_name: rs-ai
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:?LLM_API_KEY 未设置，请复制 .env.docker.example 为 .env 并填写}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_TEMPERATURE: "0"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    ports:
+      - "8000:8000"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: resume-screening/backend:latest
+    container_name: rs-backend
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+      # broker 就绪没有可靠探针，MqProducer 自带重连，这里只保证启动顺序
+      rocketmq-broker:
+        condition: service_started
+    environment:
+      # 全部走 application.yml 里的 ${} 占位，不依赖 Spring 的 relaxed binding
+      DB_URL: "jdbc:mysql://mysql:3306/resume_screening?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false&rewriteBatchedStatements=true"
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      MQ_NAMESRV: rocketmq-namesrv:9876
+      AI_BASE_URL: http://ai-service:8000
+      UPLOAD_DIR: /data/uploads
+      TZ: Asia/Shanghai
+    volumes:
+      - upload-data:/data/uploads
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: resume-screening/frontend:latest
+    container_name: rs-web
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - backend
+    ports:
+      # 只暴露这一个端口就够用：前端和 /api 都走它
+      - "${WEB_PORT:-8088}:80"
+
+volumes:
+  mysql-data:
+  rocketmq-store:
+  upload-data:

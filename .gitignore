@@ -28,6 +28,8 @@ demo/acceptance/
 
 # ---- 本地配置（含密钥，不要提交）----
 ai-service/.env
+# docker compose 读取的根目录 .env，同样是密钥
+/.env
 *.local.yml
 
 # ---- IDE ----
