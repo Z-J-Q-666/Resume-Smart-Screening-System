@@ -55,6 +55,14 @@ public class AiClient {
     public record Example(String digest, int score) {
     }
 
+    /** 模型发起的一次工具调用 */
+    public record ChatToolCall(String id, String name, JsonNode arguments) {
+    }
+
+    /** 一轮对话的结果：要么有 answer，要么有 toolCalls */
+    public record ChatResult(String content, List<ChatToolCall> toolCalls, String finishReason) {
+    }
+
     private record Envelope(int code, String message, JsonNode data) {
     }
 
@@ -137,6 +145,39 @@ public class AiClient {
                 data.path("model").asText("unknown"),
                 data.path("promptVersion").asText("unknown")
         );
+    }
+
+    // --------------------------------------------------------------------- chat
+
+    /**
+     * 跑一轮带工具的对话。
+     *
+     * <p>注意这里**只跑一轮**：返回的是"模型下一步想干什么"，不是最终答案。
+     * 循环由 Java 侧的 AgentLoop 控制——工具要查库，而 AI 服务刻意不碰数据库。
+     */
+    public ChatResult chat(List<Map<String, Object>> messages, List<Map<String, Object>> tools,
+                           boolean forceTool) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("messages", messages);
+        payload.put("tools", tools == null ? List.of() : tools);
+        payload.put("force_tool", forceTool);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        Envelope env = post(props.getAi().getBaseUrl() + "/chat", new HttpEntity<>(payload, headers));
+        ensureOk(env);
+
+        JsonNode data = env.data();
+        List<ChatToolCall> calls = new ArrayList<>();
+        for (JsonNode c : data.path("toolCalls")) {
+            calls.add(new ChatToolCall(
+                    c.path("id").asText(""),
+                    c.path("name").asText(""),
+                    c.path("arguments")));
+        }
+        String content = data.hasNonNull("content") ? data.get("content").asText() : null;
+        return new ChatResult(content, calls, data.path("finishReason").asText("stop"));
     }
 
     // ------------------------------------------------------------------- health

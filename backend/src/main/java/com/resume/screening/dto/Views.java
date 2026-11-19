@@ -171,4 +171,21 @@ public final class Views {
                               double estCostYuan,
                               String priceNote) {
     }
+
+    // ------------------------------------------------------------------ Agent
+
+    /** 一轮工具调用：谁、带了什么参数、返回了什么、花了多久。给前端展示"它查了什么" */
+    public record AgentStep(int step,
+                            String tool,
+                            String arguments,
+                            String result,
+                            int costMs) {
+    }
+
+    public record AgentAnswer(String answer,
+                              List<AgentStep> trace,
+                              int steps,
+                              /** true 表示撞到步数上限，answer 不再可信 */
+                              boolean truncated) {
+    }
 }

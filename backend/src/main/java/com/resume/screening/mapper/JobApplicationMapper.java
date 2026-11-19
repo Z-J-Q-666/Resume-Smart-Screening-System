@@ -3,6 +3,7 @@ package com.resume.screening.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.resume.screening.domain.JobApplication;
+import com.resume.screening.dto.AgentApplicationRow;
 import com.resume.screening.dto.BoardRow;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -54,8 +55,7 @@ public interface JobApplicationMapper extends BaseMapper<JobApplication> {
                                 @Param("highThreshold") int highThreshold,
                                 @Param("partialThreshold") int partialThreshold);
 
-    /** 岗位列表用：一次 GROUP BY 拿到所有岗位的投递数与均分 */
-    @Select("""
+    /** 岗位列表用：一次 GROUP BY 拿到所有岗位的投递数与均分 */    @Select("""
             SELECT job_id AS jobId, COUNT(*) AS applicationCount, AVG(score) AS avgScore
               FROM job_application
              GROUP BY job_id
@@ -65,6 +65,38 @@ public interface JobApplicationMapper extends BaseMapper<JobApplication> {
     /** 岗位详情用：投递人数 */
     @Select("SELECT COUNT(*) FROM job_application WHERE job_id = #{jobId}")
     long countByJobId(@Param("jobId") Long jobId);
+
+    /**
+     * Agent 工具用的检索。技能过滤刻意不放进 SQL：
+     * JSON 数组里的模糊匹配写起来又长又难调，数据量只有几百条，Java 侧过滤更直接。
+     * 这里返回 limit×2，给上层按技能再筛留出余量。
+     */
+    @Select("""
+            <script>
+            SELECT ja.id AS applicationId, ja.job_id AS jobId, ja.resume_id AS resumeId,
+                   ja.rule_score AS ruleScore, ja.semantic_score AS semanticScore, ja.score AS score,
+                   ja.status AS status, ja.reason AS reason,
+                   r.candidate_name AS candidateName, r.parsed_json AS parsedJson,
+                   JSON_UNQUOTE(JSON_EXTRACT(r.parsed_json,'$.education.degree')) AS degree,
+                   CAST(JSON_UNQUOTE(JSON_EXTRACT(r.parsed_json,'$.total_years')) AS DECIMAL(5,1)) AS totalYears
+              FROM job_application ja
+              JOIN resume r ON r.id = ja.resume_id
+             WHERE 1 = 1
+             <if test="jobId != null"> AND ja.job_id = #{jobId} </if>
+             <if test="minScore != null"> AND ja.score &gt;= #{minScore} </if>
+             <if test="maxScore != null"> AND ja.score &lt;= #{maxScore} </if>
+             <if test="minYears != null">
+               AND CAST(JSON_UNQUOTE(JSON_EXTRACT(r.parsed_json,'$.total_years')) AS DECIMAL(5,1)) &gt;= #{minYears}
+             </if>
+             ORDER BY (ja.score IS NULL), ja.score DESC
+             LIMIT #{limit}
+            </script>
+            """)
+    List<AgentApplicationRow> searchForAgent(@Param("jobId") Long jobId,
+                                             @Param("minScore") BigDecimal minScore,
+                                             @Param("maxScore") BigDecimal maxScore,
+                                             @Param("minYears") BigDecimal minYears,
+                                             @Param("limit") int limit);
 
     /** 岗位详情用：平均分（只算已打分的） */
     @Select("SELECT AVG(score) FROM job_application WHERE job_id = #{jobId} AND score IS NOT NULL")
