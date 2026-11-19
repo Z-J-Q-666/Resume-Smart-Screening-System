@@ -92,6 +92,10 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:?LLM_API_KEY 未设置，请复制 .env.docker.example 为 .env 并填写}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       LLM_TEMPERATURE: "0"
+      # 留空则 Python 侧判定不可用，自动降级为本地相似度检索
+      EMBED_BASE_URL: ${EMBED_BASE_URL:-}
+      EMBED_API_KEY: ${EMBED_API_KEY:-}
+      EMBED_MODEL: ${EMBED_MODEL:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status==200 else 1)"]
       interval: 10s
