@@ -85,12 +85,24 @@ class ResumeProfile(BaseModel):
         return _truncate(v, 200) or ""
 
 
+class MatchExample(BaseModel):
+    """同岗位历史录用者，作为打分尺度的锚点。
+
+    只给摘要和当时的分，不给完整 profile——省 token，也避免模型被无关细节带偏。
+    """
+
+    digest: str
+    score: int
+
+
 class MatchRequest(BaseModel):
     job_title: str = ""
     jd_text: str = ""
     must_skills: list[str] = Field(default_factory=list)
     plus_skills: list[str] = Field(default_factory=list)
     profile: ResumeProfile
+    # 为空时退回原逻辑（无参照打分），不影响可用性
+    examples: list[MatchExample] = Field(default_factory=list)
 
 
 class MatchResult(BaseModel):
@@ -101,3 +113,10 @@ class MatchResult(BaseModel):
     @classmethod
     def _reason(cls, v: str) -> str:
         return _truncate(v, 200) or ""
+
+
+class EmbedRequest(BaseModel):
+    """批量向量化。只接受纯文本，业务字段的拼接放在 Java 侧——
+    这样 AI 服务保持"通用能力"的定位，不需要懂 profile 长什么样。"""
+
+    texts: list[str] = Field(default_factory=list)

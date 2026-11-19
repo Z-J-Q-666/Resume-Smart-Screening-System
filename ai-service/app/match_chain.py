@@ -11,7 +11,8 @@ from .schemas import MatchRequest, MatchResult
 # 不会出现"新 prompt 配旧分数"的脏数据。
 #   v1 → v2：增加"档内定位"规则。v1 时跨方向的候选人会集体挤在 38-42，
 #            排序等于没排；v2 要求按命中项在档内拉开，并规定最小分差。
-PROMPT_VERSION = "v2"
+#   v2 → v3：支持注入"同岗位历史录用者"作为尺度锚点（RAG 校准）。
+PROMPT_VERSION = "v3"
 
 _SYSTEM = """你是一位资深技术面试官，负责判断候选人经历与岗位要求的契合程度，输出 JSON。
 
@@ -58,6 +59,26 @@ def _profile_digest(req: MatchRequest) -> dict:
     }
 
 
+def _examples_block(req: MatchRequest) -> str:
+    """同岗位历史录用者，作为打分尺度的锚点。
+
+    没有参照时模型全靠自己猜"这个岗位的门槛在哪"，这是语义分整体偏低、
+    且跨方向扎堆的根因之一。有了参照，尺度就有了落点。
+    """
+    if not req.examples:
+        return ""
+
+    lines = [f"{i}. 【{e.score}】{e.digest}" for i, e in enumerate(req.examples, 1)]
+    return (
+        "\n【同岗位历史录取参照】"
+        "（以下候选人已被该岗位录用，方括号内是系统当时给的语义分）\n"
+        + "\n".join(lines)
+        + "\n\n请以此为尺度校准：与参照水平相当 → 85-95；明显低于参照 → 按差距下调。\n"
+        "注意：如果参照的是不同技术方向（例如参照是 Java 后端、当前候选人是算法），"
+        "不要因为参照分高就抬高当前候选人的分——先判断方向是否一致，方向不符仍然要低分。\n"
+    )
+
+
 def _user_prompt(req: MatchRequest, schema_json: dict) -> str:
     job = {
         "title": req.job_title,
@@ -67,7 +88,7 @@ def _user_prompt(req: MatchRequest, schema_json: dict) -> str:
     }
     return f"""【岗位】
 {json.dumps(job, ensure_ascii=False, indent=2)}
-
+{_examples_block(req)}
 【候选人】
 {json.dumps(_profile_digest(req), ensure_ascii=False, indent=2)}
 

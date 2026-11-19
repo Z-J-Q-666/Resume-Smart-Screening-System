@@ -13,12 +13,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from . import embedding
 from .config import settings
 from .extract_chain import PROMPT_VERSION as EXTRACT_PROMPT_VERSION, extract_profile
 from .llm import LLMFailure, SchemaViolation
 from .match_chain import PROMPT_VERSION as MATCH_PROMPT_VERSION, match_profile
 from .pdf_reader import NoTextLayerError, extract_text
-from .schemas import MatchRequest
+from .schemas import EmbedRequest, MatchRequest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +32,8 @@ logger = logging.getLogger("ai.service")
 E_NO_TEXT_LAYER = 2001
 E_LLM_FAILURE = 2002
 E_SCHEMA_VIOLATION = 2003
+# 2004 不是"失败"，是"没配"。Java 侧收到它应该降级到本地相似度，而不是判失败
+E_NO_EMBEDDING = 2004
 E_BAD_REQUEST = 1001
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
@@ -72,6 +75,9 @@ def health():
             # Java 侧启动时比对这两个版本，避免两边配置的缓存 key 对不上
             "extractPromptVersion": EXTRACT_PROMPT_VERSION,
             "matchPromptVersion": MATCH_PROMPT_VERSION,
+            # 向量化是否可用。false 时 Java 会自动降级，不影响打分
+            "embeddingAvailable": embedding.available(),
+            "embeddingModel": embedding.model_name(),
         },
     }
 
@@ -163,3 +169,31 @@ async def match(req: MatchRequest, request: Request):
             "promptVersion": MATCH_PROMPT_VERSION,
         }
     )
+
+
+@app.post("/embed")
+def embed(req: EmbedRequest):
+    """批量向量化。未配置服务时返回 2004，由 Java 侧降级到本地相似度。"""
+    if not embedding.available():
+        return fail(E_NO_EMBEDDING, "未配置向量化服务（EMBED_BASE_URL / EMBED_API_KEY / EMBED_MODEL）")
+
+    texts = [t for t in (req.texts or []) if t and t.strip()]
+    if not texts:
+        return fail(E_BAD_REQUEST, "texts 为空")
+    if len(texts) > 64:
+        return fail(E_BAD_REQUEST, "单次最多 64 条")
+
+    try:
+        vectors = embedding.embed_texts(texts)
+    except embedding.EmbeddingUnavailable as e:
+        return fail(E_NO_EMBEDDING, str(e))
+    except Exception as e:
+        # 网络、鉴权、额度问题都算可重试的失败
+        logger.error("向量化失败 err=%s", e)
+        return fail(E_LLM_FAILURE, f"向量化失败：{type(e).__name__}: {e}")
+
+    return ok({
+        "vectors": vectors,
+        "dim": len(vectors[0]) if vectors else 0,
+        "model": embedding.model_name(),
+    })
