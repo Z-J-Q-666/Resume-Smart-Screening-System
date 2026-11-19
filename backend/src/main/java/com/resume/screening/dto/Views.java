@@ -186,6 +186,8 @@ public final class Views {
                               List<AgentStep> trace,
                               int steps,
                               /** true 表示撞到步数上限，answer 不再可信 */
-                              boolean truncated) {
+                              boolean truncated,
+                              /** 下次追问要带回来，否则记忆断掉 */
+                              String conversationId) {
     }
 }

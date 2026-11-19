@@ -1,6 +1,7 @@
 package com.resume.screening.agent;
 
 import com.resume.screening.ai.AiClient;
+import com.resume.screening.cache.ConversationStore;
 import com.resume.screening.common.Json;
 import com.resume.screening.dto.Views;
 import lombok.RequiredArgsConstructor;
@@ -51,10 +52,18 @@ public class AgentLoop {
     private final AiClient aiClient;
     private final ToolRegistry registry;
     private final Json json;
+    private final ConversationStore conversationStore;
 
-    public Views.AgentAnswer query(String question) {
+    public Views.AgentAnswer query(String question, String conversationId) {
+        String convId = (conversationId == null || conversationId.isBlank())
+                ? conversationStore.newId() : conversationId;
+        List<Map<String, String>> history = conversationStore.load(convId);
+
+        // 规则、历史、当前问题合并成一条 user 消息。
+        // 不用 system 的原因见 RULES 的注释；也不用多条 user 交替，避免模型把历史当成新指令。
         List<Map<String, Object>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "user", "content", RULES + question));
+        messages.add(Map.of("role", "user",
+                "content", RULES + historyBlock(history) + "\n【当前问题】\n" + question));
 
         List<Views.AgentStep> trace = new ArrayList<>();
         List<Map<String, Object>> toolSpecs = registry.specs();
@@ -68,8 +77,10 @@ public class AgentLoop {
                 String answer = result.content() == null || result.content().isBlank()
                         ? "我没能根据现有数据回答这个问题。可以换个问法，比如指定岗位或分数区间。"
                         : result.content();
-                log.info("Agent 完成 steps={} tools={}", step, trace.size());
-                return new Views.AgentAnswer(answer, trace, step, false);
+                log.info("Agent 完成 convId={} steps={} tools={} history={}",
+                        convId, step, trace.size(), history.size() / 2);
+                conversationStore.append(convId, question, answer);
+                return new Views.AgentAnswer(answer, trace, step, false, convId);
             }
 
             // 把模型这一轮的"我要调这些工具"回填进对话
@@ -93,11 +104,31 @@ public class AgentLoop {
             }
         }
 
-        log.warn("Agent 达到步数上限 question={}", truncate(question, 60));
+        log.warn("Agent 达到步数上限 convId={} question={}", convId, truncate(question, 60));
         return new Views.AgentAnswer(
                 "这个问题需要的分析步数超过上限（" + MAX_STEPS + " 步），我先停下了。"
                         + "建议把问题说得更具体一些，比如指定岗位、分数区间或技能。",
-                trace, MAX_STEPS, true);
+                trace, MAX_STEPS, true, convId);
+    }
+
+    /**
+     * 历史压成纯文本塞进 prompt。
+     *
+     * <p>为什么不还原成多轮 messages：历史里的答案是我们自己生成的，
+     * 当成 assistant 消息回灌容易让模型"模仿上一条的风格"而不是重新查数据。
+     * 当成参考资料读，反而更稳。
+     */
+    private static String historyBlock(List<Map<String, String>> history) {
+        if (history == null || history.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder("\n【之前的对话，供你理解上下文，数据要重新查】\n");
+        for (Map<String, String> m : history) {
+            sb.append("user".equals(m.get("role")) ? "问：" : "答：")
+                    .append(m.get("content"))
+                    .append('\n');
+        }
+        return sb.toString();
     }
 
     private Map<String, Object> assistantMessage(AiClient.ChatResult result) {
