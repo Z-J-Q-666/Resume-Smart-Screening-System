@@ -51,6 +51,15 @@ public class AppProperties {
     @Data
     public static class RateLimit {
         private int uploadPerMinute = 20;
+
+        /**
+         * Agent 查询限流。
+         *
+         * <p>一次问句会触发 3-5 轮 LLM 调用，比上传贵一个量级，所以额度小得多；
+         * 日上限是真正的成本闸门——分钟级只能防连点，防不住通宵跑脚本。
+         */
+        private int agentPerMinute = 10;
+        private int agentPerDay = 200;
     }
 
     @Data
