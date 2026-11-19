@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.resume.screening.common.Json;
 import com.resume.screening.config.AppProperties;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +47,12 @@ public class AiClient {
     }
 
     /** /health 返回的版本信息，用于启动时校验 Java 与 Python 的 prompt 版本是否对齐 */
-    public record HealthInfo(String model, String extractPromptVersion, String matchPromptVersion) {
+    public record HealthInfo(String model, String extractPromptVersion, String matchPromptVersion,
+                             boolean embeddingAvailable, String embeddingModel) {
+    }
+
+    /** 打分锚点：同岗位历史录用者的一行摘要 + 当时的分 */
+    public record Example(String digest, int score) {
     }
 
     private record Envelope(int code, String message, JsonNode data) {
@@ -92,7 +98,8 @@ public class AiClient {
                               String jdText,
                               List<String> mustSkills,
                               List<String> plusSkills,
-                              JsonNode profile) {
+                              JsonNode profile,
+                              List<Example> examples) {
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("job_title", jobTitle == null ? "" : jobTitle);
@@ -100,6 +107,9 @@ public class AiClient {
         payload.put("must_skills", mustSkills == null ? List.of() : mustSkills);
         payload.put("plus_skills", plusSkills == null ? List.of() : plusSkills);
         payload.put("profile", json.mapper().convertValue(profile, Map.class));
+        // 空列表等价于"没有参照"，Python 侧会跳过锚点段落，退回 v2 的打分逻辑
+        payload.put("examples", examples == null ? List.of()
+                : examples.stream().map(e -> Map.of("digest", e.digest(), "score", e.score())).toList());
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -147,8 +157,38 @@ public class AiClient {
         return new HealthInfo(
                 data.path("model").asText("unknown"),
                 data.path("extractPromptVersion").asText("unknown"),
-                data.path("matchPromptVersion").asText("unknown")
+                data.path("matchPromptVersion").asText("unknown"),
+                data.path("embeddingAvailable").asBoolean(false),
+                data.path("embeddingModel").asText("")
         );
+    }
+
+    // -------------------------------------------------------------------- embed
+
+    /**
+     * 批量向量化。服务未配置时 Python 返回 2004，这里抛出去由调用方降级——
+     * 向量化只是"锦上添花"，不该让打分链路上的任何一环因此失败。
+     */
+    public List<float[]> embed(List<String> texts) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("texts", texts);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        Envelope env = post(props.getAi().getBaseUrl() + "/embed", new HttpEntity<>(payload, headers));
+        ensureOk(env);
+
+        List<float[]> out = new ArrayList<>();
+        for (JsonNode arr : env.data().path("vectors")) {
+            float[] v = new float[arr.size()];
+            for (int i = 0; i < arr.size(); i++) {
+                v[i] = (float) arr.get(i).asDouble();
+            }
+            out.add(v);
+        }
+        log.info("向量化完成 n={} dim={}", out.size(), out.isEmpty() ? 0 : out.get(0).length);
+        return out;
     }
 
     // ------------------------------------------------------------------ internal
@@ -182,6 +222,8 @@ public class AiClient {
         switch (env.code()) {
             case 2001 -> throw AiException.noTextLayer(msg);
             case 2003 -> throw AiException.schemaViolation(msg);
+            // 2004：向量化未配置。不是错误，调用方应该降级而不是判失败
+            case 2004 -> throw new AiException(2004, msg, false);
             case 1001 -> throw new AiException(1001, msg, false);
             default -> throw AiException.llmFailure(msg);
         }

@@ -20,6 +20,7 @@ import com.resume.screening.mapper.JobApplicationMapper;
 import com.resume.screening.mapper.JobMapper;
 import com.resume.screening.mapper.ResumeMapper;
 import com.resume.screening.match.ScoreCalculator;
+import com.resume.screening.service.CalibrationService;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,6 +59,7 @@ public class MatchConsumer implements InitializingBean {
     private final RedisLock lock;
     private final SemanticScoreCache semanticCache;
     private final AiCallLogMapper aiCallLogMapper;
+    private final CalibrationService calibrationService;
 
     private DefaultMQPushConsumer consumer;
 
@@ -159,6 +161,7 @@ public class MatchConsumer implements InitializingBean {
             try {
                 String promptVersion = props.getAi().getMatchPromptVersion();
                 boolean cacheHit = false;
+                int calibrationCount = 0;
                 AiClient.MatchOutcome semantic;
 
                 // 同一份简历投多个岗位、重试、对账补投，profile 与岗位要求都没变时不该重复付费
@@ -170,9 +173,13 @@ public class MatchConsumer implements InitializingBean {
                             cached.get().score(), cached.get().reason(), 0, 0, 0,
                             "cache", promptVersion);
                 } else {
+                    // 有历史录用记录就注入参照，把模型的分值尺度锚住；没有就退回原逻辑
+                    List<AiClient.Example> examples = calibrationService.pickExamples(
+                            job.getId(), resume.getId(), profile);
                     semantic = aiClient.match(
                             job.getTitle(), job.getJdText(),
-                            json.toStringList(job.getMustSkills()), plusSkills, profile);
+                            json.toStringList(job.getMustSkills()), plusSkills, profile, examples);
+                    calibrationCount = examples.size();
                     // 缓存 key 用配置版本：配置与 Python 侧的 PROMPT_VERSION 必须一致，启动时校验
                     semanticCache.put(resume.getId(), job.getId(),
                             semantic.semanticScore(), semantic.reason(), promptVersion);
@@ -196,10 +203,11 @@ public class MatchConsumer implements InitializingBean {
                 logMatchCall(applicationId, job.getId(), resume.getId(), semantic, costMs, cacheHit);
 
                 log.info("打分完成 applicationId={} jobId={} resumeId={} edu={} exp={} skill={} "
-                                + "rule={} semantic={} total={} costMs={} cacheHit={}",
+                                + "rule={} semantic={} total={} costMs={} cacheHit={} calibration={}",
                         applicationId, job.getId(), resume.getId(),
                         breakdown.educationScore(), breakdown.expScore(), breakdown.skillScore(),
-                        breakdown.ruleScore(), semantic.semanticScore(), total, costMs, cacheHit);
+                        breakdown.ruleScore(), semantic.semanticScore(), total, costMs, cacheHit,
+                        calibrationCount);
                 return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
 
             } catch (AiException e) {
