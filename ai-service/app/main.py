@@ -14,12 +14,13 @@ from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from . import embedding
+from .chat_chain import chat_once
 from .config import settings
 from .extract_chain import PROMPT_VERSION as EXTRACT_PROMPT_VERSION, extract_profile
 from .llm import LLMFailure, SchemaViolation
 from .match_chain import PROMPT_VERSION as MATCH_PROMPT_VERSION, match_profile
 from .pdf_reader import NoTextLayerError, extract_text
-from .schemas import EmbedRequest, MatchRequest
+from .schemas import ChatRequest, EmbedRequest, MatchRequest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -196,4 +197,29 @@ def embed(req: EmbedRequest):
         "vectors": vectors,
         "dim": len(vectors[0]) if vectors else 0,
         "model": embedding.model_name(),
+    })
+
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+    """跑一轮带工具的对话。模型要么回答，要么发起工具调用，循环在 Java 侧。"""
+    if not req.messages:
+        return fail(E_BAD_REQUEST, "messages 为空")
+    try:
+        result = chat_once(req)
+    except LLMFailure as e:
+        return fail(E_LLM_FAILURE, str(e))
+    except Exception as e:
+        logger.error("对话失败 err=%s", e)
+        return fail(E_LLM_FAILURE, f"对话失败：{type(e).__name__}: {e}")
+
+    # 手动拼驼峰：ChatResponse 的 model_dump() 输出的是蛇形 tool_calls，
+    # 与 Java 侧的 toolCalls 对不上。这个项目所有跨语言响应都手写字段名，别在这里破例。
+    return ok({
+        "content": result.content,
+        "toolCalls": [
+            {"id": c.get("id", ""), "name": c.get("name", ""), "arguments": c.get("arguments", {})}
+            for c in result.tool_calls
+        ],
+        "finishReason": result.finish_reason,
     })

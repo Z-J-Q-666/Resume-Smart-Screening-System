@@ -120,3 +120,38 @@ class EmbedRequest(BaseModel):
     这样 AI 服务保持"通用能力"的定位，不需要懂 profile 长什么样。"""
 
     texts: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- 带工具的对话
+# Agent 循环放在 Java 侧：Python 只负责"给模型一段对话 + 工具清单，返回模型想干什么"。
+# 这样 AI 服务保持无状态，工具执行（查库）留在业务层，可测试、可审计。
+
+
+class ToolSpec(BaseModel):
+    name: str
+    description: str
+    # JSON Schema，原样透传给模型
+    parameters: dict
+
+
+class ChatMessage(BaseModel):
+    role: str                          # system / user / assistant / tool
+    content: Optional[str] = None
+    # assistant 发起工具调用时填
+    tool_calls: list[dict] = Field(default_factory=list)
+    # tool 消息回填结果时填，对应某次调用的 id
+    tool_call_id: Optional[str] = None
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(default_factory=list)
+    tools: list[ToolSpec] = Field(default_factory=list)
+    # 首轮强制调用工具。实测 DeepSeek 在长中文 system prompt 下会"只说不做"，
+    # 用 tool_choice=required 把它推回正轨；后续轮次放开，否则永远不收敛出答案。
+    force_tool: bool = False
+
+
+class ChatResponse(BaseModel):
+    content: Optional[str] = None
+    tool_calls: list[dict] = Field(default_factory=list)
+    finish_reason: str = "stop"
